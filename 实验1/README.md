@@ -66,3 +66,8 @@ yum install gnome-devel gnome-devel-docs
 
 linux 还有三个简单的图形化命令：whiptail、zentity、xdialog（其中有一个也是依赖于 GTK 的）
 
+
+
+
+
+**<u>最后，有任何问题可联系我 641889918@qq.com</u>**
