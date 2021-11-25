@@ -26,6 +26,18 @@ main() {
 
 ## 实验结果：
 
+编译时需要加上 `-lpthread -lrt`
+
+```sh
+# 编译
+gcc -lpthread -lrt -o main main.c
+
+# 运行
+./main
+```
+
+
+
 自行测试代码
 
 ## 实验收获：

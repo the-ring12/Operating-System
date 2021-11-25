@@ -11,6 +11,10 @@
 
 #define NUM 5 // 共享内存块数
 
+#define SEM_WRITE "semwrite"
+#define SEM_READ "semread"
+#define MUTEX "mutex"
+
 // 信号量
 sem_t *readsem, *writesem, *mutex;
 
@@ -31,13 +35,19 @@ key_t KEY;
 // 共享内存头指针
 ptrNode head;
 
+// 读写节点
+ptrNode writeNode, readNode;
+
+// 文件
+FILE *fp, *fp2;
+
 void createShm();                          // 创建共享内存环
 void destroyShm();                         // 销毁共享内环
 void initSem();                            // 初始化信号量
 void destroySem();                         // 销毁信号量
 void mainHandler(int signum);              // 主进程处理信号
 void readHandler(int signum);              // readbuffer进程处理信号
-void sem_file(FILE *fp, ptrNode readNode); // readbuffer 从共享内存写入文件
+void sem_file(); // readbuffer 从共享内存写入文件
 
 void writeprocess(); // writebuffer 执行
 void readprocess();  // readbuffer 执行
@@ -57,6 +67,9 @@ int main()
 
     // 初始化信号量
     initSem();
+
+    // 初始化读写节点
+    readNode = writeNode = head;
 
     // 创建 readbuffer 进程
     readbuffer = fork();
@@ -84,6 +97,12 @@ int main()
 
     while (1)
     {
+        sleep(3);
+        int i = 0;
+        sem_getvalue(writesem, &i);
+        printf("main:writesem: %d\n", i);
+        sem_getvalue(readsem, &i);
+        printf("main:readsem: %d\n", i);
     }
 
     return 0;
@@ -92,11 +111,10 @@ int main()
 void writeprocess()
 {
     // 初始化写节点
-    ptrNode writeNode = head;
+    writeNode = head;
     char ch[64];
     int shmid;
 
-    FILE *fp;
     // 打开文件
     if ((fp = fopen("test1", "r")) == NULL)
     {
@@ -109,11 +127,12 @@ void writeprocess()
         // 绑定共享内存块
         shmid = writeNode->shmid;
 
-        printf("%d\n", shmid);
-        
+        printf("write:%d\n", shmid);
+
         // P操作
-        sem_wait(mutex);
         sem_wait(writesem);
+        sem_wait(mutex);
+        printf("write\n");
 
         // 绑定共享内存
         char *shmadd = shmat(shmid, NULL, 0);
@@ -121,31 +140,32 @@ void writeprocess()
         {
             printf("绑定共享内存失败!!!\n");
         }
-        
+
         // 读取文件
         fgets(ch, 64, fp);
         printf("write:%s", ch);
-        
+
         // 写入共享内存
         strcpy(shmadd, ch);
-        
+
         // 解除绑定
         if (shmdt(shmadd) < 0)
         {
             printf("接触绑定失败!!\n");
         }
-        
 
         // V操作
         sem_post(readsem);
         sem_post(mutex);
-        
+
         // 调试：查看信号灯的值
-        // int i = 0;
-        // sem_getvalue(writesem, &i);
-        // printf("writesem: %d\n", i);
-        // sem_getvalue(readsem, &i);
-        // printf("readsem: %d\n", i);
+        int i = 0;
+        sem_getvalue(writesem, &i);
+        printf("write:writesem: %d\n", i);
+        sem_getvalue(readsem, &i);
+        printf("write:readsem: %d\n", i);
+        sem_getvalue(mutex, &i);
+        printf("write:mutex: %d\n", i);
 
         // 共享内存中写的节点移至下一个节点
         writeNode = writeNode->next;
@@ -154,6 +174,7 @@ void writeprocess()
     // 向主进程和readbuffer发送信号结束
     kill(readbuffer, SIGINT);
     kill(mianId, SIGINT);
+    exit(1);
 }
 
 void readprocess()
@@ -163,9 +184,7 @@ void readprocess()
     signal(SIGINT, readHandler);
 
     // 初始化写节点
-    ptrNode readNode = head;
-
-    FILE *fp2;
+    // readNode = head;
 
     // 打开文件
     if ((fp2 = fopen("test2", "a")) == NULL)
@@ -176,104 +195,73 @@ void readprocess()
     // 读共享内存，写文件
     while (1)
     {
-        char ch[64];
-        // 绑定共享内存块
-        int shmid = readNode->shmid;
-        printf("%d\n", shmid);
-        
-        // 调试：查看信号灯的值
-        int i = 0;
-        sem_getvalue(writesem, &i);
-        printf("read:writesem: %d\n", i);
-        sem_getvalue(readsem, &i);
-        printf("read:readsem: %d\n", i);
-        
-        // P操作
-        sem_wait(mutex);
-        sem_wait(readsem);
-        
-        // 绑定共享内存
-        char *shmadd = shmat(shmid, NULL, 0);
-        if (shmadd < 0)
-        {
-            printf("绑定共享内存失败!!!\n");
-        }
-
-        /* 查看共享内存是否有值
-           这一步应该是多余的，因为使用了信号灯进行控制
-           且，这时一个环形的共享内存区域，不使用信号灯还会出现重复写的情况
-           */
-        if (shmadd == NULL)
-        {
-            printf("值为空！！\n");
-        }
-        // printf("read:%s\n", shmadd);
-        
-        // 读取共享内存数据
-        strcpy(ch, shmadd);
-        
-        // 写入文件按
-        fputs(ch, fp2);
-        
-        // 解除绑定
-        if (shmdt(shmadd) < 0)
-        {
-            printf("解除绑定失败!!\n");
-        }
-        
-
-        // V操作
-        sem_post(writesem);
-        sem_post(mutex);
-        
-        // 读节点移动到下一节点
-        readNode = readNode->next;
+        printf("while:%d\n", readNode->shmid);
+        sem_file();
     }
 }
-
-void sem_file(FILE *fp, ptrNode readNode)
+int count = 1;
+void sem_file()
 {
+    printf("%d\n", count++);
+    printf("%d\n", readNode->shmid);
     char ch[64];
     // 绑定共享内存块
     int shmid = readNode->shmid;
-    printf("read:P操作!!\n");
-    // P操作
+    printf("read:%d\n", shmid);
+
+    // 调试：查看信号灯的值
     int i = 0;
     sem_getvalue(writesem, &i);
     printf("read:writesem: %d\n", i);
     sem_getvalue(readsem, &i);
     printf("read:readsem: %d\n", i);
-    sem_wait(mutex);
-    sem_wait(readsem);
-    
+    sem_getvalue(mutex, &i);
+    printf("read:mutex: %d\n", i);
 
+    // P操作
+    printf("P before:read\n");
+    sem_wait(readsem);
+    sem_wait(mutex);
+    printf("P after:read\n");
+
+    // 绑定共享内存
     char *shmadd = shmat(shmid, NULL, 0);
     if (shmadd < 0)
     {
         printf("绑定共享内存失败!!!\n");
     }
-    printf("read:绑定内存!!\n");
+
+    /* 查看共享内存是否有值
+           这一步应该是多余的，因为使用了信号灯进行控制
+           且，这时一个环形的共享内存区域，不使用信号灯还会出现重复写的情况
+           */
+    if (shmadd == NULL)
+    {
+        printf("值为空！！\n");
+    }
+    // printf("read:%s\n", shmadd);
+
     // 读取共享内存数据
     strcpy(ch, shmadd);
-    printf("read:读取内存数据!!\n");
+
+    printf("read:%s\n", ch);
+
     // 写入文件按
-    fputs(ch, fp);
-    printf("read:写入文件!!\n");
+    fputs(ch, fp2);
+
     // 解除绑定
     if (shmdt(shmadd) < 0)
     {
         printf("解除绑定失败!!\n");
     }
-    printf("read:解除绑定!!\n");
 
     // V操作
     sem_post(writesem);
     sem_post(mutex);
-    printf("read:V操作!!\n");
 
+    // 读节点移动到下一节点
     readNode = readNode->next;
 }
-
 
 // 创建环形共享内存区
 void createShm()
@@ -321,53 +309,57 @@ void createShm()
 void destroyShm()
 {
     ptrNode cur = head;
-    shmctl(cur->shmid, IPC_RMID, NULL);
 
-    while (cur == NULL)
+    while (cur->next != head)
     {
-        // 销毁共享内存, 删除失败一直执行
+        // 销毁共享内存
         shmctl(cur->shmid, IPC_RMID, NULL);
         ptrNode tmp = cur;
         cur = cur->next;
         free(tmp);
     }
+    shmctl(cur->shmid, IPC_RMID, NULL);
     free(cur);
 }
 
 // 初始化信号灯
 void initSem()
 {
-    writesem = sem_open("write", O_CREAT, 0644, NUM);
-    readsem = sem_open("read", O_CREAT, 0644, 0);
-    mutex = sem_open("mutex", O_CREAT, 0644, 1);
+    writesem = sem_open(SEM_WRITE, O_CREAT, 0644, NUM);
+    readsem = sem_open(SEM_READ, O_CREAT, 0644, 0);
+    mutex = sem_open(MUTEX, O_CREAT, 0644, 1);
 }
 
 // 关闭并销毁信号灯
 void destroySem()
 {
-    while (sem_close(writesem) < 0)
-    {
-        printf("writesem 销毁失败！！\n");
-    }
-    while (sem_close(readsem) < 0)
-    {
-        printf("readsem 销毁失败！！\n");
-    }
-    while (sem_close(mutex) < 0)
-    {
-        printf("mutexsem 销毁失败！！\n");
-    }
+    // while (sem_close(writesem) < 0)
+    // {
+    //     printf("writesem 销毁失败！！\n");
+    // }
+    // while (sem_close(readsem) < 0)
+    // {
+    //     printf("readsem 销毁失败！！\n");
+    // }
+    // while (sem_close(mutex) < 0)
+    // {
+    //     printf("mutexsem 销毁失败！！\n");
+    // }
 
-    while (sem_unlink("write") < 0)
+    printf("删除信号量成功！\n");
+    if (sem_unlink(SEM_WRITE) < 0)
     {
+        sem_close(writesem);
         printf("write 销毁失败！！\n");
     }
-    while (sem_unlink("read") < 0)
+    if (sem_unlink(SEM_READ) < 0)
     {
+        sem_close(readsem);
         printf("read 销毁失败！！\n");
     }
-    while (sem_unlink("mutex") < 0)
+    if (sem_unlink(MUTEX) < 0)
     {
+        sem_close(mutex);
         printf("mutex 销毁失败！！\n");
     }
 }
@@ -377,14 +369,23 @@ void mainHandler(int signum)
 {
     // 等待子进程结束
     wait(NULL);
+    wait(NULL);
     destroyShm();
     destroySem();
-    exit(0);
+    exit(1);
 }
 
 // readbuffer 接收到 SIGINT 的处理函数
 void readHandler(int signum)
 {
-    printf("%d", signum);
-    exit(0);
+    printf("%d\n", signum);
+    int i;
+    sem_getvalue(readsem, &i);
+    while (i > 0)
+    {
+        printf("readhandler: %d\n", i);
+        sem_file();
+        sem_getvalue(readsem, &i);
+    }
+    exit(1);
 }
